@@ -1,0 +1,25 @@
+# Données
+data/
+
+# Modèles sauvegardés
+outputs/models/
+*.pth
+*.pt
+*.h5
+*.pkl
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+env/
+
+# Divers
+.DS_Store
+*.zip
+*.tar.gz
