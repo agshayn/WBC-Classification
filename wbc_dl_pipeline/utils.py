@@ -49,9 +49,9 @@ from sklearn.metrics import (classification_report, confusion_matrix,
 # ============================================================
 
 # ===== CHEMINS — À ADAPTER =====
-BASE_DIR = "./data"
-TRAIN_DIR = os.path.join(BASE_DIR, "Train")
-TEST_DIR = os.path.join(BASE_DIR, "Test")
+BASE_DIR = "/home/infres/anadanak-24/projetkaggle/data/raw/IMA205-challenge 2"
+TRAIN_DIR = os.path.join(BASE_DIR, "train")
+TEST_DIR = os.path.join(BASE_DIR, "test")
 TRAIN_CSV = os.path.join(BASE_DIR, "train_metadata.csv")
 TEST_CSV = os.path.join(BASE_DIR, "test_metadata.csv")
 CHECKPOINTS_DIR = "./checkpoints"
@@ -136,21 +136,61 @@ def create_dirs():
 class WBCDataset(Dataset):
     """Dataset PyTorch pour images WBC."""
     
-    def __init__(self, df, img_dir, id_col, label_col=None, transform=None):
+    # Set partagé pour ne pas spammer les warnings
+    _missing_files_warned = set()
+    
+    def __init__(self, df, img_dir, id_col, label_col=None, transform=None,
+                 verify_files=False):
         self.df = df.reset_index(drop=True)
         self.img_dir = img_dir
         self.id_col = id_col
         self.label_col = label_col
         self.transform = transform
+        
+        # Optionnel : vérifier l'existence de tous les fichiers au démarrage
+        if verify_files:
+            self._verify_files()
+    
+    def _verify_files(self):
+        """Vérifie quels fichiers existent et filtre le DataFrame."""
+        print(f"🔍 Vérification de l'existence des {len(self.df)} fichiers...")
+        exists_mask = []
+        for idx in range(len(self.df)):
+            img_id = str(self.df.iloc[idx][self.id_col])
+            if not img_id.lower().endswith('.png'):
+                img_id = f"{img_id}.png"
+            exists_mask.append(os.path.exists(os.path.join(self.img_dir, img_id)))
+        
+        n_missing = sum(1 for e in exists_mask if not e)
+        if n_missing > 0:
+            print(f"   ⚠️ {n_missing}/{len(self.df)} fichiers manquants — ils seront ignorés")
+            self.df = self.df[exists_mask].reset_index(drop=True)
+            print(f"   ✅ {len(self.df)} fichiers valides conservés")
+        else:
+            print(f"   ✅ Tous les fichiers sont présents")
     
     def __len__(self):
         return len(self.df)
     
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        img_id = row[self.id_col]
-        img_path = os.path.join(self.img_dir, f"{img_id}.png")
-        image = Image.open(img_path).convert('RGB')
+        img_id = str(row[self.id_col])
+        
+        # Gérer le cas où l'ID contient déjà l'extension (.png) ou non
+        if img_id.lower().endswith('.png'):
+            img_path = os.path.join(self.img_dir, img_id)
+        else:
+            img_path = os.path.join(self.img_dir, f"{img_id}.png")
+        
+        # Robustesse aux fichiers manquants : retourner l'image suivante
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except (FileNotFoundError, OSError) as e:
+            if img_path not in WBCDataset._missing_files_warned:
+                print(f"⚠️  Fichier manquant ignoré : {img_path}")
+                WBCDataset._missing_files_warned.add(img_path)
+            # Retourner l'item suivant (modulo len pour boucler)
+            return self.__getitem__((idx + 1) % len(self.df))
         
         if self.transform:
             image = self.transform(image)
@@ -192,9 +232,14 @@ def get_transforms(img_size=IMG_SIZE):
 # ============================================================
 
 def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
-                 num_workers=NUM_WORKERS, val_split=VAL_SPLIT, seed=SEED):
+                 num_workers=NUM_WORKERS, val_split=VAL_SPLIT, seed=SEED,
+                 verify_files=False):
     """
     Charge les CSVs, split train/val, crée les DataLoaders.
+    
+    Args:
+        verify_files: si True, vérifie l'existence de chaque image au démarrage
+                     et filtre celles manquantes. Plus lent mais évite les crashs.
     
     Returns:
         train_loader, val_loader, test_loader,
@@ -216,6 +261,23 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
     train_df['label_idx'] = train_df[label_col].map(label2idx)
     
     print(f"📊 Train : {len(train_df)} | Test : {len(test_df)} | Classes : {len(class_names)}")
+    
+    # Vérification optionnelle des fichiers train
+    if verify_files:
+        print(f"\n🔍 Vérification des fichiers train...")
+        valid_mask = []
+        for idx in tqdm(range(len(train_df)), desc="Verify train", ncols=100):
+            img_id = str(train_df.iloc[idx][id_col])
+            if not img_id.lower().endswith('.png'):
+                img_id = f"{img_id}.png"
+            valid_mask.append(os.path.exists(os.path.join(TRAIN_DIR, img_id)))
+        
+        n_missing = sum(1 for v in valid_mask if not v)
+        if n_missing > 0:
+            print(f"   ⚠️ {n_missing}/{len(train_df)} fichiers train manquants — filtrés")
+            train_df = train_df[valid_mask].reset_index(drop=True)
+        else:
+            print(f"   ✅ Tous les fichiers train présents")
     
     # Split stratifié
     train_idx, val_idx = train_test_split(
@@ -435,18 +497,23 @@ class EarlyStopping:
         return score < self.best_score - self.min_delta
 
 
-def train_one_epoch(model, loader, criterion, optimizer, scaler, device, is_inception=False):
-    """Une époque d'entraînement avec Mixed Precision."""
+def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
+                    is_inception=False, epoch_num=None, total_epochs=None):
+    """Une époque d'entraînement avec Mixed Precision et barre de progression."""
     model.train()
     running_loss, correct, total = 0.0, 0, 0
     
-    for images, labels in loader:
+    desc = f"Epoch {epoch_num}/{total_epochs} [Train]" if epoch_num else "Train"
+    pbar = tqdm(loader, desc=desc, leave=False, ncols=120,
+                bar_format='{l_bar}{bar:30}{r_bar}')
+    
+    for images, labels in pbar:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         
         optimizer.zero_grad(set_to_none=True)
         
-        with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+        with autocast(enabled=torch.cuda.is_available()):
             if is_inception and model.training:
                 outputs, aux_outputs = model(images)
                 loss = criterion(outputs, labels) + 0.4 * criterion(aux_outputs, labels)
@@ -464,22 +531,32 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, is_ince
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
+        
+        # Mise à jour de la barre avec les métriques en live
+        pbar.set_postfix({
+            'loss': f'{running_loss/total:.4f}',
+            'acc':  f'{correct/total:.4f}',
+        })
     
     return running_loss / total, correct / total
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device):
-    """Validation."""
+def validate(model, loader, criterion, device, epoch_num=None, total_epochs=None):
+    """Validation avec barre de progression."""
     model.eval()
     running_loss, correct, total = 0.0, 0, 0
     all_preds, all_labels = [], []
     
-    for images, labels in loader:
+    desc = f"Epoch {epoch_num}/{total_epochs} [Val]  " if epoch_num else "Val"
+    pbar = tqdm(loader, desc=desc, leave=False, ncols=120,
+                bar_format='{l_bar}{bar:30}{r_bar}')
+    
+    for images, labels in pbar:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         
-        with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+        with autocast(enabled=torch.cuda.is_available()):
             outputs = model(images)
             loss = criterion(outputs, labels)
         
@@ -489,6 +566,11 @@ def validate(model, loader, criterion, device):
         correct += predicted.eq(labels).sum().item()
         all_preds.extend(predicted.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
+        
+        pbar.set_postfix({
+            'loss': f'{running_loss/total:.4f}',
+            'acc':  f'{correct/total:.4f}',
+        })
     
     return (running_loss / total, correct / total,
             np.array(all_preds), np.array(all_labels))
@@ -556,9 +638,13 @@ def train_model(model_name, train_loader, val_loader, weight_tensor, device,
         epoch_start = time.time()
         
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, scaler, device, is_inception
+            model, train_loader, criterion, optimizer, scaler, device,
+            is_inception, epoch_num=epoch+1, total_epochs=num_epochs
         )
-        val_loss, val_acc, _, _ = validate(model, val_loader, criterion, device)
+        val_loss, val_acc, _, _ = validate(
+            model, val_loader, criterion, device,
+            epoch_num=epoch+1, total_epochs=num_epochs
+        )
         scheduler.step()
         
         history['train_loss'].append(train_loss)
@@ -706,7 +792,7 @@ def predict_test(model, test_df, idx2label, device, model_name,
     
     for images, ids in tqdm(test_loader, desc="Prédiction test"):
         images = images.to(device, non_blocking=True)
-        with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+        with autocast(enabled=torch.cuda.is_available()):
             outputs = model(images)
         _, predicted = outputs.max(1)
         all_preds.extend(predicted.cpu().numpy())

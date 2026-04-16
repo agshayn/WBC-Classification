@@ -91,7 +91,7 @@ for model_name in available_models:
     with torch.no_grad():
         for images, labels in current_val_loader:
             images = images.to(device, non_blocking=True)
-            with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+            with autocast(enabled=torch.cuda.is_available()):
                 outputs = model(images)
             all_logits.append(outputs.cpu())
             all_labels.append(labels)
@@ -251,7 +251,7 @@ def predict_test_logits(model_name, test_df, device):
     with torch.no_grad():
         for images, ids in tqdm(test_loader_local, desc=f"Test {model_name}"):
             images = images.to(device, non_blocking=True)
-            with autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+            with autocast(enabled=torch.cuda.is_available()):
                 outputs = model(images)
             all_logits.append(outputs.cpu())
             all_ids.extend(ids)
