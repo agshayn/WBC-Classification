@@ -108,20 +108,41 @@ def create_resnet50(num_classes=13):
     return model
 
 
+def create_efficientnet_b3_v1(num_classes=13):
+    """Head V1/V2 : Dropout → Linear → BatchNorm → ReLU → Dropout → Linear."""
+    model = models.efficientnet_b3(weights=None)
+    in_features = model.classifier[1].in_features
+    model.classifier = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(in_features, 512),
+        nn.BatchNorm1d(512),
+        nn.ReLU(inplace=True),
+        nn.Dropout(0.3),
+        nn.Linear(512, num_classes),
+    )
+    return model
+
+
 def load_model_from_checkpoint(ckpt_path, num_classes=13):
-    """Charge un modèle en détectant l'architecture automatiquement."""
+    """Charge un modèle en détectant l'architecture ET le head automatiquement."""
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     state = ckpt['model_state_dict']
     
-    # Détecter : ResNet a des clés 'layer4.*', EfficientNet a 'features.*'
+    # Détecter ResNet vs EfficientNet
     is_resnet = any('layer4' in k for k in state.keys())
     
     if is_resnet:
         model = create_resnet50(num_classes)
         arch = "ResNet50"
     else:
-        model = create_efficientnet_b3(num_classes)
-        arch = "EfficientNet-B3"
+        # Détecter quel head : V1/V2 a 'classifier.2.weight' (BatchNorm), V3/V4 n'en a pas
+        has_batchnorm_head = 'classifier.2.weight' in state and 'classifier.2.running_mean' in state
+        if has_batchnorm_head:
+            model = create_efficientnet_b3_v1(num_classes)
+            arch = "EfficientNet-B3 (head V1/V2)"
+        else:
+            model = create_efficientnet_b3(num_classes)
+            arch = "EfficientNet-B3 (head V3/V4)"
     
     model.load_state_dict(state)
     print(f"     Architecture détectée : {arch}")
