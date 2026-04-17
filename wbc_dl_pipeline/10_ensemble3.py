@@ -58,7 +58,8 @@ label2idx = {lbl: idx for idx, lbl in enumerate(class_names)}
 idx2label = {idx: lbl for lbl, idx in label2idx.items()}
 
 # Détecter les checkpoints
-CKPT_DIR = "./checkpoints"
+CKPT_DIR = "/home/infres/anadanak-24/projetkaggle/checkpoints/"
+
 candidates = [
     ("V3",             "best_v3.pth"),
     ("V4 Final",       "best_v4_final.pth"),
