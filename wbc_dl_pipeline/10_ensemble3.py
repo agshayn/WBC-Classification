@@ -150,28 +150,25 @@ def load_model_from_checkpoint(ckpt_path, num_classes=13):
     """Charge un modèle en détectant l'architecture automatiquement."""
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     state = ckpt['model_state_dict']
-    
-    # Détecter par les clés du state_dict
     keys = list(state.keys())
-    key_str = ' '.join(keys[:20])
     
-    if any('layer4' in k for k in keys):
-        model = create_resnet50(num_classes)
-        arch = "ResNet50"
-    elif any('features.7' in k for k in keys) and any('classifier.2' in k for k in keys):
-        # ConvNeXt a features.0 à features.7 + classifier.0/1/2
-        if 'classifier.2.1.weight' in state or 'classifier.2.0.weight' in state:
-            model = create_convnext_small(num_classes)
-            arch = "ConvNeXt-Small"
-        else:
-            model = create_convnext_small(num_classes)
-            arch = "ConvNeXt-Small"
-    elif any('layers.3' in k for k in keys) and any('head' in k for k in keys):
+    # 1. Swin : clé unique 'attn.qkv'
+    if any('attn.qkv' in k for k in keys):
         model = create_swin_t(num_classes)
         arch = "Swin-T"
-    elif 'classifier.2.weight' in state and 'classifier.2.running_mean' in state:
+    # 2. ConvNeXt : clé unique 'layer_scale'
+    elif any('layer_scale' in k for k in keys):
+        model = create_convnext_small(num_classes)
+        arch = "ConvNeXt-Small"
+    # 3. ResNet : clé unique 'layer4'
+    elif any('layer4' in k for k in keys):
+        model = create_resnet50(num_classes)
+        arch = "ResNet50"
+    # 4. EfficientNet V1/V2 (head avec BatchNorm)
+    elif 'classifier.2.running_mean' in state:
         model = create_efficientnet_b3_v1(num_classes)
         arch = "EfficientNet-B3 (V1/V2)"
+    # 5. EfficientNet V3/V4
     else:
         model = create_efficientnet_b3(num_classes)
         arch = "EfficientNet-B3"
