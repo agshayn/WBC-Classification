@@ -45,16 +45,16 @@ We implemented two complementary approaches: a classical ML pipeline and a Deep 
 
 ### 2. Deep Learning Pipeline
 
-* **Baseline:** MobileNetV2 → F1 = 0.35. Identified issue: broken class weights.
-* **Weight correction:** from `w = N/Ni` (924:1 ratio) to `w = √(N/Ni)` (12:1 ratio). **+0.34 F1 gain** — the single most impactful change in the project.
+* **Baseline:** MobileNetV2, F1 = 0.35. Identified issue: broken class weights.
+* **Weight correction:** from `w = N/Ni` (924:1 ratio) to `w = √(N/Ni)` (12:1 ratio). **+0.34 F1 gain**, the single most impactful change in the project.
 * **Offline oversampling:** rare classes duplicated to a minimum of 500 images + heavy data augmentation.
-* **2-stage training:** Stage 1 (general features) → Stage 2 (fine-tune rare classes, LR÷20).
+* **2-stage training:** Stage 1 (general features), Stage 2 (fine-tune rare classes, LR÷20).
 * **Model diversity:** EfficientNet-B3, ResNet50, ConvNeXt-Small, Swin Transformer Tiny.
 * **Ensemble:** weighted soft voting using each model's F1 score + TTA ×10.
 
 ### Key Finding
 
-> In highly imbalanced problems, **loss calibration matters more than model complexity**. Class weight correction (924:1 → 12:1 ratio) yielded a +0.34 F1 gain — more than architecture change (+0.02) or oversampling (+0.06).
+> In highly imbalanced problems, **loss calibration matters more than model complexity**. Class weight correction (924:1 to 12:1 ratio) yielded a +0.34 F1 gain — more than architecture change (+0.02) or oversampling (+0.06).
 
 ## Results
 
