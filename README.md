@@ -84,7 +84,8 @@ We implemented two complementary approaches: a classical ML pipeline and a Deep 
 │   ├── 10_ensemble.py                
 │   └── submissions/                 
 │
-├── data/                             
+├── data/  
+├── rapport/                             
 ├── checkpoints/                      
 ├── requirements.txt
 ├── .gitignore
