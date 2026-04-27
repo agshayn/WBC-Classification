@@ -1,0 +1,15 @@
+torch>=2.0
+torchvision>=0.15
+numpy
+pandas
+
+scikit-learn
+scikit-image
+
+opencv-python-headless
+Pillow
+
+matplotlib
+seaborn
+
+tqdm
