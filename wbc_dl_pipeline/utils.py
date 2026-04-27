@@ -1,22 +1,4 @@
-"""
-utils.py — Module commun pour la pipeline Deep Learning WBC
-============================================================
-
-Contient :
-- Configuration globale (chemins, hyperparamètres)
-- WBCDataset (PyTorch Dataset)
-- Transforms (augmentation, normalisation)
-- Factory de modèles (create_model)
-- Boucle d'entraînement (train_model)
-- Évaluation (validate, plot_history, plot_confusion_matrix)
-- Inférence test + génération de soumission
-
-Usage dans un notebook :
-    from utils import *
-    setup_seed(42)
-    train_loader, val_loader, test_loader, ... = prepare_data()
-    model, history = train_model('resnet50', train_loader, val_loader, ...)
-"""
+##### utils.py, prepare the dataset for mobilenet
 
 import os
 import time
@@ -44,12 +26,7 @@ from sklearn.metrics import (classification_report, confusion_matrix,
                              accuracy_score, f1_score)
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-# ===== CHEMINS — À ADAPTER =====
-BASE_DIR = "/home/infres/anadanak-24/projetkaggle/data/raw/IMA205-challenge 2"
+BASE_DIR = "../data/raw/IMA205-challenge 2" #### change the root if needed
 TRAIN_DIR = os.path.join(BASE_DIR, "train")
 TEST_DIR = os.path.join(BASE_DIR, "test")
 TRAIN_CSV = os.path.join(BASE_DIR, "train_metadata.csv")
@@ -57,7 +34,6 @@ TEST_CSV = os.path.join(BASE_DIR, "test_metadata.csv")
 CHECKPOINTS_DIR = "./checkpoints"
 SUBMISSIONS_DIR = "./submissions"
 
-# ===== HYPERPARAMÈTRES PAR DÉFAUT =====
 IMG_SIZE = 224
 BATCH_SIZE = 32
 NUM_WORKERS = 4
@@ -69,29 +45,16 @@ VAL_SPLIT = 0.15
 SEED = 42
 NUM_CLASSES = 13
 
-# Normalisation ImageNet (obligatoire pour modèles pré-entraînés)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
-# ============================================================
-# SETUP & UTILITIES
-# ============================================================
-
 def setup_device(gpu_id=None):
-    """
-    Configure et retourne le device (GPU si disponible).
-    
-    Args:
-        gpu_id: int ou None. Si int, force l'utilisation de ce GPU spécifique.
-                À utiliser AVANT l'import de torch dans le notebook si tu veux
-                isoler un GPU. Exemple : setup_device(gpu_id=0)
-    """
     if gpu_id is not None:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🖥️  Device : {device}")
+    print(f"Device : {device}")
     
     if torch.cuda.is_available():
         n_gpus = torch.cuda.device_count()
@@ -103,20 +66,18 @@ def setup_device(gpu_id=None):
         print(f"   PyTorch CUDA   : {torch.version.cuda}")
         print(f"   cuDNN version  : {torch.backends.cudnn.version()}")
         
-        # Optimisations Ampere (3090 = compute 8.6)
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-        print(f"   ✅ cuDNN benchmark + TF32 activés (optimal pour Ampere/3090)")
+        print(f"cuDNN benchmark + TF32 activés (optimal pour Ampere/3090)")
     else:
-        print("   ⚠️ Pas de GPU détecté — entraînement sur CPU (très lent)")
+        print("Pas de GPU détecté — entraînement sur CPU (très lent)")
     
     print(f"   PyTorch        : {torch.__version__}")
     return device
 
 
 def setup_seed(seed=SEED):
-    """Reproductibilité."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
@@ -124,19 +85,11 @@ def setup_seed(seed=SEED):
 
 
 def create_dirs():
-    """Crée les dossiers de sortie."""
     os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
     os.makedirs(SUBMISSIONS_DIR, exist_ok=True)
 
-
-# ============================================================
-# DATASET
-# ============================================================
-
+###### Dataset
 class WBCDataset(Dataset):
-    """Dataset PyTorch pour images WBC."""
-    
-    # Set partagé pour ne pas spammer les warnings
     _missing_files_warned = set()
     
     def __init__(self, df, img_dir, id_col, label_col=None, transform=None,
@@ -146,14 +99,11 @@ class WBCDataset(Dataset):
         self.id_col = id_col
         self.label_col = label_col
         self.transform = transform
-        
-        # Optionnel : vérifier l'existence de tous les fichiers au démarrage
         if verify_files:
             self._verify_files()
     
     def _verify_files(self):
-        """Vérifie quels fichiers existent et filtre le DataFrame."""
-        print(f"🔍 Vérification de l'existence des {len(self.df)} fichiers...")
+        print(f"Vérification de l'existence des {len(self.df)} fichiers...")
         exists_mask = []
         for idx in range(len(self.df)):
             img_id = str(self.df.iloc[idx][self.id_col])
@@ -163,11 +113,11 @@ class WBCDataset(Dataset):
         
         n_missing = sum(1 for e in exists_mask if not e)
         if n_missing > 0:
-            print(f"   ⚠️ {n_missing}/{len(self.df)} fichiers manquants — ils seront ignorés")
+            print(f"{n_missing}/{len(self.df)} fichiers manquants — ils seront ignorés")
             self.df = self.df[exists_mask].reset_index(drop=True)
-            print(f"   ✅ {len(self.df)} fichiers valides conservés")
+            print(f"{len(self.df)} fichiers valides conservés")
         else:
-            print(f"   ✅ Tous les fichiers sont présents")
+            print(f"Tous les fichiers sont présents")
     
     def __len__(self):
         return len(self.df)
@@ -176,20 +126,17 @@ class WBCDataset(Dataset):
         row = self.df.iloc[idx]
         img_id = str(row[self.id_col])
         
-        # Gérer le cas où l'ID contient déjà l'extension (.png) ou non
         if img_id.lower().endswith('.png'):
             img_path = os.path.join(self.img_dir, img_id)
         else:
             img_path = os.path.join(self.img_dir, f"{img_id}.png")
         
-        # Robustesse aux fichiers manquants : retourner l'image suivante
         try:
             image = Image.open(img_path).convert('RGB')
         except (FileNotFoundError, OSError) as e:
             if img_path not in WBCDataset._missing_files_warned:
-                print(f"⚠️  Fichier manquant ignoré : {img_path}")
+                print(f"Fichier manquant ignoré : {img_path}")
                 WBCDataset._missing_files_warned.add(img_path)
-            # Retourner l'item suivant (modulo len pour boucler)
             return self.__getitem__((idx + 1) % len(self.df))
         
         if self.transform:
@@ -200,12 +147,9 @@ class WBCDataset(Dataset):
         return image, img_id
 
 
-# ============================================================
-# TRANSFORMS
-# ============================================================
+##### Transforms
 
 def get_transforms(img_size=IMG_SIZE):
-    """Retourne (train_transform, val_transform)."""
     train_t = transforms.Compose([
         transforms.Resize((img_size + 32, img_size + 32)),
         transforms.RandomCrop(img_size),
@@ -227,44 +171,26 @@ def get_transforms(img_size=IMG_SIZE):
     return train_t, val_t
 
 
-# ============================================================
-# DATA PREPARATION
-# ============================================================
-
+###### Data preparation
 def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
                  num_workers=NUM_WORKERS, val_split=VAL_SPLIT, seed=SEED,
                  verify_files=False):
-    """
-    Charge les CSVs, split train/val, crée les DataLoaders.
-    
-    Args:
-        verify_files: si True, vérifie l'existence de chaque image au démarrage
-                     et filtre celles manquantes. Plus lent mais évite les crashs.
-    
-    Returns:
-        train_loader, val_loader, test_loader,
-        class_names, label2idx, idx2label,
-        train_subset, val_subset, test_df,
-        weight_tensor (pour CrossEntropyLoss)
-    """
-    # Charger les CSV
+
     train_df = pd.read_csv(TRAIN_CSV)
     test_df = pd.read_csv(TEST_CSV)
     
     id_col = train_df.columns[0]
     label_col = train_df.columns[1]
     
-    # Mapping des labels
     class_names = sorted(train_df[label_col].unique())
     label2idx = {lbl: idx for idx, lbl in enumerate(class_names)}
     idx2label = {idx: lbl for lbl, idx in label2idx.items()}
     train_df['label_idx'] = train_df[label_col].map(label2idx)
     
-    print(f"📊 Train : {len(train_df)} | Test : {len(test_df)} | Classes : {len(class_names)}")
+    print(f"Train : {len(train_df)} | Test : {len(test_df)} | Classes : {len(class_names)}")
     
-    # Vérification optionnelle des fichiers train
     if verify_files:
-        print(f"\n🔍 Vérification des fichiers train...")
+        print(f"\nVérification des fichiers train...")
         valid_mask = []
         for idx in tqdm(range(len(train_df)), desc="Verify train", ncols=100):
             img_id = str(train_df.iloc[idx][id_col])
@@ -274,12 +200,11 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
         
         n_missing = sum(1 for v in valid_mask if not v)
         if n_missing > 0:
-            print(f"   ⚠️ {n_missing}/{len(train_df)} fichiers train manquants — filtrés")
+            print(f"{n_missing}/{len(train_df)} fichiers train manquants — filtrés")
             train_df = train_df[valid_mask].reset_index(drop=True)
         else:
-            print(f"   ✅ Tous les fichiers train présents")
+            print(f"Tous les fichiers train présents")
     
-    # Split stratifié
     train_idx, val_idx = train_test_split(
         np.arange(len(train_df)),
         test_size=val_split,
@@ -288,17 +213,14 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
     )
     train_subset = train_df.iloc[train_idx]
     val_subset = train_df.iloc[val_idx]
-    print(f"   ↳ Split : {len(train_subset)} train / {len(val_subset)} val")
+    print(f"Split : {len(train_subset)} train / {len(val_subset)} val")
     
-    # Transforms
     train_transform, val_transform = get_transforms(img_size)
     
-    # Datasets
     train_ds = WBCDataset(train_subset, TRAIN_DIR, id_col, 'label_idx', train_transform)
     val_ds = WBCDataset(val_subset, TRAIN_DIR, id_col, 'label_idx', val_transform)
     test_ds = WBCDataset(test_df, TEST_DIR, test_df.columns[0], None, val_transform)
     
-    # Sampler pondéré pour gérer le déséquilibre
     train_labels = train_subset['label_idx'].values
     class_counts = Counter(train_labels)
     total = sum(class_counts.values())
@@ -309,7 +231,6 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
         replacement=True
     )
     
-    # DataLoaders
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, sampler=sampler,
         num_workers=num_workers, pin_memory=True, drop_last=True
@@ -323,7 +244,6 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
         num_workers=num_workers, pin_memory=True
     )
     
-    # Class weights pour la loss
     weight_tensor = torch.FloatTensor(
         [total / class_counts[i] for i in range(len(class_names))]
     )
@@ -334,102 +254,12 @@ def prepare_data(img_size=IMG_SIZE, batch_size=BATCH_SIZE,
             train_subset, val_subset, test_df,
             weight_tensor)
 
-
-# ============================================================
-# MODÈLES
-# ============================================================
-
-class CustomCNN(nn.Module):
-    """CNN custom — Réf: Healthcare 2022, Fig.9(a)."""
-    
-    def __init__(self, num_classes=13):
-        super().__init__()
-        self.features = nn.Sequential(
-            # Bloc 1
-            nn.Conv2d(3, 64, 3, padding=1), nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True), nn.MaxPool2d(2, 2), nn.Dropout2d(0.2),
-            # Bloc 2
-            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True), nn.MaxPool2d(2, 2), nn.Dropout2d(0.2),
-            # Bloc 3
-            nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, 2), nn.Dropout2d(0.3),
-            # Bloc 4
-            nn.Conv2d(256, 512, 3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, 2), nn.Dropout2d(0.3),
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d((4, 4))
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 4 * 4, 512), nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True), nn.Dropout(0.5),
-            nn.Linear(512, 256), nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True), nn.Dropout(0.4),
-            nn.Linear(256, num_classes),
-        )
-    
-    def forward(self, x):
-        x = self.features(x)
-        x = self.avgpool(x)
-        return self.classifier(x)
-
+##### Models
 
 def create_model(model_name, num_classes=NUM_CLASSES, pretrained=True, freeze_backbone=False):
-    """
-    Factory de modèles.
-    
-    Modèles supportés :
-        custom_cnn, vgg16, resnet50, densenet121,
-        inception_v3, mobilenet_v2, efficientnet_b0
-    """
-    if model_name == 'custom_cnn':
-        return CustomCNN(num_classes)
-    
     weights = 'IMAGENET1K_V1' if pretrained else None
     
-    if model_name == 'vgg16':
-        model = models.vgg16(weights=weights)
-        if freeze_backbone:
-            for p in model.features.parameters():
-                p.requires_grad = False
-        model.classifier[6] = nn.Linear(4096, num_classes)
-    
-    elif model_name == 'resnet50':
-        model = models.resnet50(weights=weights)
-        if freeze_backbone:
-            for n, p in model.named_parameters():
-                if 'fc' not in n:
-                    p.requires_grad = False
-        model.fc = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(model.fc.in_features, num_classes)
-        )
-    
-    elif model_name == 'densenet121':
-        model = models.densenet121(weights=weights)
-        if freeze_backbone:
-            for p in model.features.parameters():
-                p.requires_grad = False
-        model.classifier = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(model.classifier.in_features, num_classes)
-        )
-    
-    elif model_name == 'inception_v3':
-        model = models.inception_v3(weights=weights, aux_logits=True)
-        if freeze_backbone:
-            for n, p in model.named_parameters():
-                if 'fc' not in n and 'AuxLogits' not in n:
-                    p.requires_grad = False
-        model.fc = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(model.fc.in_features, num_classes)
-        )
-        model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_classes)
-    
-    elif model_name == 'mobilenet_v2':
+    if model_name == 'mobilenet_v2':
         model = models.mobilenet_v2(weights=weights)
         if freeze_backbone:
             for p in model.features.parameters():
@@ -439,16 +269,6 @@ def create_model(model_name, num_classes=NUM_CLASSES, pretrained=True, freeze_ba
             nn.Linear(model.last_channel, num_classes)
         )
     
-    elif model_name == 'efficientnet_b0':
-        model = models.efficientnet_b0(weights=weights)
-        if freeze_backbone:
-            for p in model.features.parameters():
-                p.requires_grad = False
-        model.classifier[1] = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(model.classifier[1].in_features, num_classes)
-        )
-    
     else:
         raise ValueError(f"Modèle inconnu: {model_name}")
     
@@ -456,19 +276,13 @@ def create_model(model_name, num_classes=NUM_CLASSES, pretrained=True, freeze_ba
 
 
 def get_model_input_size(model_name):
-    """Retourne la taille d'entrée recommandée pour le modèle."""
     if model_name == 'inception_v3':
         return 299
     return 224
 
 
-# ============================================================
-# ENTRAÎNEMENT
-# ============================================================
 
-class EarlyStopping:
-    """Early stopping avec restauration du meilleur modèle."""
-    
+class EarlyStopping:    
     def __init__(self, patience=7, min_delta=1e-4, mode='max'):
         self.patience = patience
         self.min_delta = min_delta
@@ -499,7 +313,6 @@ class EarlyStopping:
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
                     is_inception=False, epoch_num=None, total_epochs=None):
-    """Une époque d'entraînement avec Mixed Precision et barre de progression."""
     model.train()
     running_loss, correct, total = 0.0, 0, 0
     
@@ -532,7 +345,6 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         
-        # Mise à jour de la barre avec les métriques en live
         pbar.set_postfix({
             'loss': f'{running_loss/total:.4f}',
             'acc':  f'{correct/total:.4f}',
@@ -543,7 +355,6 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
 
 @torch.no_grad()
 def validate(model, loader, criterion, device, epoch_num=None, total_epochs=None):
-    """Validation avec barre de progression."""
     model.eval()
     running_loss, correct, total = 0.0, 0, 0
     all_preds, all_labels = [], []
@@ -579,29 +390,18 @@ def validate(model, loader, criterion, device, epoch_num=None, total_epochs=None
 def train_model(model_name, train_loader, val_loader, weight_tensor, device,
                 num_epochs=NUM_EPOCHS, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY,
                 patience=PATIENCE, freeze_backbone=False, save_best=True):
-    """
-    Entraîne un modèle complet.
-    
-    Returns:
-        model: meilleur modèle (best checkpoint)
-        history: dict avec train_loss, train_acc, val_loss, val_acc
-        val_preds, val_labels: prédictions finales sur la validation
-    """
-    print(f"\n{'='*70}")
+
     print(f"  ENTRAÎNEMENT : {model_name.upper()}")
     print(f"  Epochs: {num_epochs} | LR: {lr} | Freeze: {freeze_backbone}")
-    print(f"{'='*70}\n")
     
     is_inception = (model_name == 'inception_v3')
     
-    # Modèle
+
     model = create_model(model_name, NUM_CLASSES, pretrained=True, freeze_backbone=freeze_backbone)
     model = model.to(device)
     
-    # Loss
     criterion = nn.CrossEntropyLoss(weight=weight_tensor.to(device))
     
-    # Optimizer avec Discriminative Learning Rates
     if model_name == 'custom_cnn':
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     elif freeze_backbone:
@@ -620,16 +420,13 @@ def train_model(model_name, train_loader, val_loader, weight_tensor, device,
             {'params': head_params, 'lr': lr},
         ], weight_decay=weight_decay)
     
-    # Scheduler
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2, eta_min=1e-7
     )
     
-    # Mixed Precision + Early Stopping
     scaler = GradScaler(enabled=torch.cuda.is_available())
     early_stopping = EarlyStopping(patience=patience, mode='max')
     
-    # Historique
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
     best_val_acc = 0.0
     start_time = time.time()
@@ -655,7 +452,6 @@ def train_model(model_name, train_loader, val_loader, weight_tensor, device,
         epoch_time = time.time() - epoch_start
         current_lr = optimizer.param_groups[0]['lr']
         
-        # Monitoring VRAM (utile pour ajuster batch_size)
         vram_str = ""
         if torch.cuda.is_available():
             vram_used = torch.cuda.memory_allocated() / 1e9
@@ -670,20 +466,18 @@ def train_model(model_name, train_loader, val_loader, weight_tensor, device,
         
         early_stopping(val_acc, model)
         if early_stopping.early_stop:
-            print(f"\n  ⏹️  Early stopping à l'époque {epoch+1}")
+            print(f"\nEarly stopping à l'époque {epoch+1}")
             break
         
         if val_acc > best_val_acc:
             best_val_acc = val_acc
     
-    # Restaurer le meilleur modèle
     if early_stopping.best_model_state:
         model.load_state_dict(early_stopping.best_model_state)
     
     total_time = time.time() - start_time
-    print(f"\n  ✅ Terminé en {total_time:.0f}s | Best Val Acc: {best_val_acc:.4f}")
+    print(f"\nTerminé en {total_time:.0f}s | Best Val Acc: {best_val_acc:.4f}")
     
-    # Sauvegarde
     if save_best:
         os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
         save_path = os.path.join(CHECKPOINTS_DIR, f"best_{model_name}.pth")
@@ -693,24 +487,18 @@ def train_model(model_name, train_loader, val_loader, weight_tensor, device,
             'val_acc': best_val_acc,
             'history': history,
         }, save_path)
-        print(f"  💾 Modèle sauvegardé : {save_path}")
+        print(f" Modèle sauvegardé : {save_path}")
     
-    # Évaluation finale
     _, _, val_preds, val_labels = validate(model, val_loader, criterion, device)
     
     return model, history, val_preds, val_labels
 
 
-# ============================================================
-# VISUALISATION
-# ============================================================
-
+##### Visualisation 
 def plot_history(history, model_name, save_path=None):
-    """Affiche les courbes d'apprentissage."""
     epochs = range(1, len(history['train_loss']) + 1)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    # Loss
     axes[0].plot(epochs, history['train_loss'], 'b-', label='Train', linewidth=2)
     axes[0].plot(epochs, history['val_loss'], 'r-', label='Val', linewidth=2)
     axes[0].set_title(f'{model_name} — Loss', fontweight='bold')
@@ -719,7 +507,6 @@ def plot_history(history, model_name, save_path=None):
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
     
-    # Accuracy
     axes[1].plot(epochs, history['train_acc'], 'b-', label='Train', linewidth=2)
     axes[1].plot(epochs, history['val_acc'], 'r-', label='Val', linewidth=2)
     axes[1].set_title(f'{model_name} — Accuracy', fontweight='bold')
@@ -731,12 +518,11 @@ def plot_history(history, model_name, save_path=None):
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"💾 Sauvegardé : {save_path}")
+        print(f"Sauvegardé : {save_path}")
     plt.show()
 
 
 def plot_confusion_matrix(y_true, y_pred, class_names, model_name, save_path=None):
-    """Affiche la matrice de confusion."""
     cm = confusion_matrix(y_true, y_pred)
     cm_norm = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-8)
     
@@ -756,30 +542,23 @@ def plot_confusion_matrix(y_true, y_pred, class_names, model_name, save_path=Non
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"💾 Sauvegardé : {save_path}")
+        print(f"Sauvegardé : {save_path}")
     plt.show()
     
     return cm
 
 
 def print_classification_report(y_true, y_pred, class_names):
-    """Affiche le rapport de classification."""
-    print(f"\n📊 Accuracy : {accuracy_score(y_true, y_pred):.4f}")
-    print(f"📊 F1-macro : {f1_score(y_true, y_pred, average='macro', zero_division=0):.4f}")
+    print(f"\nAccuracy : {accuracy_score(y_true, y_pred):.4f}")
+    print(f"F1-macro : {f1_score(y_true, y_pred, average='macro', zero_division=0):.4f}")
     print(f"\n{classification_report(y_true, y_pred, target_names=class_names, zero_division=0)}")
 
 
-# ============================================================
-# INFÉRENCE & SOUMISSION
-# ============================================================
-
+##### Submission
 @torch.no_grad()
 def predict_test(model, test_df, idx2label, device, model_name,
                  batch_size=BATCH_SIZE, num_workers=NUM_WORKERS):
-    """
-    Prédit sur le test set et retourne (ids, predicted_labels).
-    Adapte automatiquement la taille d'entrée pour Inception.
-    """
+
     img_size = get_model_input_size(model_name)
     _, val_transform = get_transforms(img_size)
     
@@ -810,19 +589,15 @@ def save_submission(ids, labels, model_name, label_col='label', id_col='id'):
     submission = pd.DataFrame({id_col: ids, label_col: labels})
     submission.to_csv(save_path, index=False)
     
-    print(f"\n✅ Soumission sauvegardée : {save_path}")
+    print(f"\nSoumission sauvegardée : {save_path}")
     print(f"   Nombre de prédictions : {len(submission)}")
     print(f"\nDistribution :")
     print(submission[label_col].value_counts())
     return submission
 
 
-# ============================================================
-# CHARGEMENT D'UN CHECKPOINT
-# ============================================================
 
 def load_checkpoint(model_name, device):
-    """Charge un modèle depuis son checkpoint."""
     ckpt_path = os.path.join(CHECKPOINTS_DIR, f"best_{model_name}.pth")
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint non trouvé : {ckpt_path}")
@@ -832,5 +607,5 @@ def load_checkpoint(model_name, device):
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     
-    print(f"✅ Modèle chargé : {model_name} (Val Acc: {checkpoint['val_acc']:.4f})")
+    print(f"Modèle chargé : {model_name} (Val Acc: {checkpoint['val_acc']:.4f})")
     return model, checkpoint
