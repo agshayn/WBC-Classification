@@ -71,7 +71,6 @@ We implemented two complementary approaches: a classical ML pipeline and a Deep 
 ## Project Structure
 
 ```
-.
 ├── MachineLearning/
 │   └── 01_machine_learning.ipynb     
 │
