@@ -25,10 +25,10 @@ Contact me if you want the dataset : agshay.nadanakumar@telecom-paris.fr
 Place the data in a `data/` folder at the root of the project:
 ```
 data/
-├── train/                ### Training images (train_XXXXX.png)
-├── test/                 ### Test images (test_XXXXX.png)
-├── train_metadata.csv    ### Training labels
-├── test_metadata.csv     ### Test IDs
+├── train/                
+├── test/                 
+├── train_metadata.csv   
+├── test_metadata.csv     
 └── sample_submission.csv
 ```
 
@@ -73,20 +73,20 @@ We implemented two complementary approaches: a classical ML pipeline and a Deep 
 ```
 .
 ├── MachineLearning/
-│   └── 01_machine_learning.ipynb     ### Full ML pipeline
+│   └── 01_machine_learning.ipynb     
 │
-├── DeepLearning/                  ### Modular DL scripts
-│   ├── utils_v4.py                   ### Shared V4 module (Dataset, models, training, TTA)
-│   ├── 06_mobilenet_v2.py            ### MobileNetV2 baseline (standalone)
-│   ├── 09_efficientnet_b3.py         ### EfficientNet-B3 (V4 strategy)
-│   ├── 11_resnet50.py                ### ResNet50 (V4 strategy)
-│   ├── 12_convnext.py                ### ConvNeXt-Small (V4 strategy)
-│   ├── 13_swin.py                    ### Swin Transformer Tiny (V4 strategy)
-│   ├── 10_ensemble.py                ### Weighted ensemble of top-3
-│   └── submissions/                  ### Best submission per model
+├── DeepLearning/                 
+│   ├── utils_v4.py                  
+│   ├── 06_mobilenet_v2.py            
+│   ├── 09_efficientnet_b3.py        
+│   ├── 11_resnet50.py                
+│   ├── 12_convnext.py             
+│   ├── 13_swin.py                   
+│   ├── 10_ensemble.py                
+│   └── submissions/                 
 │
-├── data/                             ### Dataset (not versioned)
-├── checkpoints/                      ### Trained weights (not versioned)
+├── data/                             
+├── checkpoints/                      
 ├── requirements.txt
 ├── .gitignore
 └── README.md
@@ -99,13 +99,12 @@ We implemented two complementary approaches: a classical ML pipeline and a Deep 
 The 4 V4 models share the same pipeline through **`utils_v4.py`**:
 
 ```
-utils_v4.py         ### shared code (Dataset, oversampling, 2-stage training, TTA)
-    ↑
-    ├── 09_efficientnet_b3.py    ###(batch_size=32, RandomGrayscale, Affine TTA)
-    ├── 11_resnet50.py           ###(batch_size=32, RandomGrayscale, Affine TTA)
-    ├── 12_convnext.py           ###(batch_size=24)
-    ├── 13_swin.py               ###(batch_size=24)
-    └── 10_ensemble.py           ###(weighted soft voting + TTA ×10)
+utils_v4.py        
+    ├── 09_efficientnet_b3.py    
+    ├── 11_resnet50.py           
+    ├── 12_convnext.py          
+    ├── 13_swin.py              
+    └── 10_ensemble.py          
 ```
 
 Each model script is a single call to `run_full_pipeline()` with its specific parameters.
